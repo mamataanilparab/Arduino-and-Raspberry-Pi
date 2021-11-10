@@ -1,0 +1,540 @@
+#include<LiquidCrystal.h> // Including library for lcd display
+#include<TimerOne.h> // Including library to use internal registers 
+
+const int rs=12,en=11,d4=5,d5=4,d6=6,d7=7;// defining pin numbers of arduino which are connected to lcd
+LiquidCrystal lcd(rs,en,d4,d5,d6,d7);
+
+
+int RPM[]={80,82,83,85,86,90,93,95,98,100,103,106,109,113,116,120,124,128,132,137,143,148,154,160,167,175,185,200};
+float LPM[]={0.52,0.53,0.53,0.54,0.54,0.56,0.57,0.58,0.59,0.60,0.61,0.62,0.64,0.65,0.67,0.69,0.71,0.73,0.75,0.78,0.81,0.84,0.87,0.91,0.96,1.01,1.09,1.20};
+
+int *a=&RPM[27]; // pointer that points to last element of RPM array
+int *b=&RPM[0];  // pointer that points to first element of RPM array
+long int RPMAddress=a;  // RPMAddress stores the address of last element from RPM array
+long int RPMBaseAddress=b; // RPMBaseAddress stores the base address of RPM array
+
+float *p=&LPM[27];   //pointer that points to last element of LPM array
+float *q=&LPM[0];   //pointer that points to last element of LPM array
+long int LPMAddress=p;  // LPMAddress stores the address of last element from LPM array 
+long int LPMBaseAddress=q; //LPMAddress stores the base address of LPM array
+
+unsigned long lastDebounceTime = 0;  // the last time the output pin was toggled
+unsigned long debounceDelay = 200;  // the debounce time 
+int lastButtonState = HIGH; 
+
+int Motorcount=0;
+int Clk_Pulse=35;//It is default Clk_Pulse with which motor rotates; if speed increase or decrease Clk_Pulse increase or decrease by factor of 2
+float k=7.5; //
+
+float setTempCount=37.0; // It is default setTemp value; if increase or decrease button pressed its value increase or decrease by 0.1
+// min value of setTemp is 37 and max is 43
+
+float Sum; // output of heater pt100 sensor
+float FinalSum=0; // taking average of 20 Sum value and storing into FinalSum
+int Value=0;
+float temp[30]={0}; // Array to store 20 values of heater pt100
+
+
+int motorCurrentState=1;
+int MotorCount=0;
+int motorLastState=0;
+unsigned long motorLastDebounceTime = 0;  // the last time the output pin was toggled
+unsigned long motorDebounceDelay = 300;  // the debounce time 
+
+int Clk_Pulse2=0;
+
+int MotorDirectionCount=0;
+int motorDirectionLastState=0;
+unsigned long motorDirectionLastDebounceTime = 0;  // the last time the output pin was toggled
+unsigned long motorDirectionDebounceDelay = 300;  // the debounce time 
+
+int CalibrarionCount=0;
+int CalibrarionLastState=0;
+unsigned long CalibrarionLastDebounceTime = 0;  // the last time the output pin was toggled
+unsigned long CalibrarionDebounceDelay = 300;  // the debounce time 
+int j=0;
+
+int motorDirectionCurrentState=1;
+
+int HBit=0;
+int heaterCurrentState=1;
+int heaterCount=0;
+int heaterLastState=0;
+unsigned long heaterLastDebounceTime = 0;  // the last time the output pin was toggled
+unsigned long heaterDebounceDelay = 300;  // the debounce time 
+
+int second=0;
+int minute=0;
+int timeCount=0;
+int motorBit=0;
+const long interval = 1000;
+unsigned long previousMillis = 0;
+
+
+int i=0;
+
+void setup()
+{
+  pinMode(2,INPUT); // Motorspeed increase
+  pinMode(3,INPUT); // Motorspeed decrease
+
+  pinMode(18,INPUT); //Set temp increase
+  pinMode(19,INPUT); //Set temp decrease
+
+  pinMode(20,INPUT); // Heater on/off 
+  pinMode(21,INPUT); //Motor on/off
+
+  pinMode(8, OUTPUT); // direction pin of motor
+  pinMode(9,OUTPUT);  // clock pin of motor
+
+  pinMode(50,OUTPUT); // SSR controlling pin
+
+  pinMode(A0,INPUT); // heater pt100 
+  pinMode(A1,INPUT); // Inlet1 pt100 
+  pinMode(A2,INPUT); // Inlet2 pt100 
+  pinMode(A3,INPUT); // Outlet1 pt100 
+  pinMode(A4,INPUT); // Outlet2 pt100 
+
+  pinMode(51,OUTPUT); //enable disable pin of motor
+  pinMode(13,OUTPUT);// LED pin
+  pinMode(52,INPUT); // motor clockwise and anticlockwise button
+  pinMode(53,INPUT); // calibration button
+  pinMode(54,OUTPUT); // Buzzer pin
+
+  Timer1.attachInterrupt(function); // Timer1 to control motor
+
+  lcd.begin(20,4); // starts lcd
+  
+}
+
+void function()
+{
+  if(motorBit==1 && (i>=0 && i<10000))
+  {
+    i++;
+    Clk_Pulse2=90;
+    Clk_Pulse=Clk_Pulse2;
+    
+  }
+  else if(motorBit==1 && (i>=10000 && i<20000))
+  {
+    i++;
+    Clk_Pulse2=60;
+    Clk_Pulse=Clk_Pulse2;
+  }
+
+   else if(motorBit==1 && (i>=20000 && i<25000))
+  {
+    i++;
+    Clk_Pulse2=35;
+    Clk_Pulse=Clk_Pulse2;
+  }
+  else if(motorBit==0 && Clk_Pulse==35)
+  {
+    i=0;
+  }
+  //This if-else if ladder is used to ramp up the motor
+  
+   Timer1.initialize(Clk_Pulse); //initializes timer 
+   digitalWrite(9,digitalRead(9)^1); // Toggle clock pin of motor
+
+}
+
+
+/////////////////////////////MotorSpeed()//////////////////////////////
+
+void MotorSpeed()
+{
+  digitalWrite(8,HIGH); // pin 8 is always high due to which motor rotates in clockwise dirction
+    
+  if ( (millis() - lastDebounceTime) > debounceDelay) // avoid debouncing of button
+  {
+    if  (digitalRead(2) == HIGH) // checking pin2 i.e. motor speed increase is high or not
+    {
+      Clk_Pulse =(Clk_Pulse-2); // if it high then clock pulse in decreases by factor of two. Clk_pulse decrease means RPM increase.
+      // In future if we want to change the jump of RPM increase or decrease change this "2" factor with desired value
+      p++; // we shift pointer of RPM array
+      a++; // we shift pointer of LPM array
+      lastDebounceTime = millis(); // Assigning current millis() value to lastDebounceTime variable
+    }
+    else if (digitalRead(2) == HIGH)  
+    {
+       lastDebounceTime = millis();
+    }
+
+  }
+
+  if ( (millis() - lastDebounceTime) > debounceDelay) // avoid debouncing of button
+  {
+    if  (digitalRead(3) == HIGH) // checking pin3 i.e. motor speed decrease is high or not
+    {
+      Clk_Pulse =(Clk_Pulse+2);// if it high then clock pulse in increases by factor of two. Clk_pulse increase means RPM decrease.
+      // In future if we want to change the jump of RPM increase or decrease change this "2" factor with desired value
+
+      p--;// Shifting pointer of RPM array
+      a--; // Shifting pointer of LPM array
+      lastDebounceTime = millis();
+    }
+    else if (digitalRead(3) == HIGH)  
+    {
+       lastDebounceTime = millis();
+    }
+  }
+  if(p>LPMAddress)// Comparing current address of pointer with last element's address of RPM array 
+  //if it is greater than base address then make it equal to base address so as to display 200 RPM on screen. 
+  
+  {
+    p=LPMAddress;//This condition will not show LPM value greater than 1.20
+  }
+  if(Clk_Pulse<35) // comparing Clock pulse with maximum RPM value.If clock pulse is equal to 35 means RPM is maximum  
+  {
+    Clk_Pulse=35; //we don't want to increase it further so if Clock pulse is lower than 35 we make it 35
+  }
+  if(Clk_Pulse>90) // comparing Clock pulse with minimum RPM value.If clock pulse is equal to 90 means RPM is minimum
+  {
+    Clk_Pulse=90;  //we don't want to decrease it further so if Clock pulse is greater than 90 we make it 90
+  }
+  if(p<LPMBaseAddress) // Comparing current address of pointer with base address of LPM array 
+  //if it is lesser than base address then make it equal to base address 
+ 
+  {
+    p=LPMBaseAddress;
+    
+  }
+  lcd.setCursor(12,1); // set the cursor at location of 12th column and 1st row
+  lcd.print("LPM=");//Printing static text
+  lcd.print(*p);//printing current value of pointer
+  
+
+  if(a>RPMAddress)// comparing address of RPM pointer with address of last element of RPM array
+  {
+    a=RPMAddress; // If it found to be greater, we make it equal to RPMAddress 
+  }
+  if(a<RPMBaseAddress) //comparing address of RPM pointer with base address of first element of RPM array
+  {
+    a=RPMBaseAddress; //If it is less than RPMBaseAddress then make it equal to base address of RPM array.
+  }
+  lcd.setCursor(0,1);
+  lcd.print("RPM=");
+  if(*a<=99)
+  {
+    lcd.print("0");
+  }
+  
+  lcd.print(*a);
+}
+
+///////////////////////////setTemp()//////////////////
+int setTemp()
+ {
+  lcd.setCursor(0,0);// 0th column and 0th row
+  lcd.print("ST="); //Static text
+  lcd.print(setTempCount);// Printing current value of set temperature
+  if ( (millis() - lastDebounceTime) > debounceDelay) 
+  {
+    if  (digitalRead(18) == HIGH) // checking set temperature increase button state 
+    {
+      setTempCount=setTempCount+0.1; // if button state high is true increasing it by 0.1 
+      
+      lastDebounceTime = millis();
+    }
+    else if (digitalRead(18) == HIGH)  
+    {
+       lastDebounceTime = millis();
+    }
+
+  }
+
+  if ( (millis() - lastDebounceTime) > debounceDelay) 
+  {
+    if  (digitalRead(19) == HIGH) // checking set temperature decrease button state
+    {
+      setTempCount=setTempCount-0.1; // if button state high is true decrease it by 0.1
+      lastDebounceTime = millis();
+    }
+    else if (digitalRead(19) == HIGH)  
+    {
+       lastDebounceTime = millis();
+    }
+
+  }
+  if(setTempCount<37.0) // checking that set temperature is less than 37 or not
+  {
+    setTempCount=37.0; // If it is less than 37, we need to maintain it at 37. 37 is default min value
+  }
+  if(setTempCount>43.0) // checking that set temperature is greater than 43 or not
+  {
+    setTempCount=43.0; // If it is greater than 43, we need to maintain it at 43. 43 is default max value
+  }
+  return setTempCount; // returning current value of set temperature
+}
+
+///////////////////////////////////// HeaterTemp()///////////////////
+int HeaterTemp()
+{
+  lcd.setCursor(0,3);
+  lcd.print("HT=");    //Printing static text
+
+    for(int i=0;i<30;i++)
+    {
+    temp[i] = analogRead(A0); // We put 20 values of pt100 readings in an array named as temp[]
+    Sum=Sum+temp[i];         // Adding all 20 readings
+    
+    }
+    FinalSum =( Sum * 0.48828125)/10; // Convering it in desired format
+    FinalSum=FinalSum/30;// Taking an average of 30 readings
+    lcd.print(FinalSum); //Printing value
+    Value=FinalSum; // Copying value into Value variable
+    FinalSum=0; // FianlSum variable is reset to 0
+    Sum=0; // Sum variable is reset to 0
+  
+  return Value;
+   
+}
+
+/////////////////////////////////BitDisplay()/////////////
+void Heater_softLatching()
+{
+  int HT=HeaterTemp(); // calling heater temp function and storing return value of that function in HT variable
+  int ST=setTemp(); //  calling set temp function and storing return value of that function in ST variable
+
+  heaterCurrentState=digitalRead(20);
+
+ 
+
+  if(heaterCurrentState!=heaterLastState && ((millis() - heaterLastDebounceTime) > heaterDebounceDelay)) 
+    {
+        heaterCount=heaterCount+1;
+        heaterLastDebounceTime = millis(); //set the current time
+    }
+    if(heaterCurrentState==HIGH && heaterCount%2!=0)
+    {
+      HBit=1;
+      digitalWrite(13,HIGH);
+    }
+    if(heaterCurrentState==LOW && heaterCount%2==0)
+    {
+     HBit=0;
+     digitalWrite(13,LOW);
+    }
+}
+
+void BitDisplay()
+{
+  int HT=HeaterTemp(); // calling heater temp function and storing return value of that function in HT variable
+  int ST=setTemp(); //  calling set temp function and storing return value of that function in ST variable
+  lcd.setCursor(12,0);
+  lcd.print("Heater=");
+  int Heater=0;
+  
+
+  if(HBit==1 && motorBit==1 && HT<=ST)
+  {
+    digitalWrite(50,HIGH);
+    Heater=1;
+  }
+  else if(HBit==0 || motorBit==0 || HT>ST)
+  {
+    digitalWrite(50,LOW);
+    Heater=0;
+  }
+  lcd.print(Heater);
+}
+///////////////////////////////////////////motorONOFF_softLatching///////////
+
+void motorONOFF_softLatching()
+{
+    motorCurrentState=digitalRead(21);// Reading current state of motor pin
+    
+    if(motorCurrentState!=motorLastState && ((millis() - motorLastDebounceTime) > motorDebounceDelay)) //if current satte is not equal to last state
+    // and difference between motor button click is greater than motor debounce delay then add 1 in motor counter
+    {
+        MotorCount=MotorCount+1;
+        motorLastDebounceTime = millis(); //set the current time
+    }
+    if(motorCurrentState==LOW && MotorCount%2==0 )
+    {
+      digitalWrite(51,HIGH);
+      motorBit=0;
+    }
+    if(motorCurrentState==HIGH && MotorCount%2!=0)
+    {
+       digitalWrite(51,LOW);
+       motorBit=1;
+       
+    }
+    
+  
+}
+
+////////////////////////////////StopWatch()////////////////
+
+void StopWatch() //  
+{
+  lcd.setCursor(0,2);
+  lcd.print("Time=");
+  
+  if(HBit==1)
+  {
+    unsigned long currentMillis = millis();
+               
+    if (currentMillis - previousMillis >= interval)
+    {        
+      previousMillis = currentMillis;     
+
+      second++;
+  
+      if(second==60)
+      {
+        minute++;
+        second=0;
+      }
+    }
+    
+   }
+   if(HBit==0 && minute==0 && timeCount==0)
+   {
+    lcd.print("00");
+    timeCount++;
+   }
+   if(HBit==1 && minute==0)
+   {
+     lcd.print("0");
+     lcd.print(1);
+     timeCount++;
+   }
+   else if(HBit==1 && minute>0)
+   {
+     lcd.print("0");
+     lcd.print(minute+1);
+   }
+}
+
+void motorDirection()
+{
+  if(digitalRead(52)==LOW) // if button is not pressed then direction of motor rotation is clockwise
+  {
+    digitalWrite(8,HIGH);
+    
+  }
+  else if(digitalRead(52)==HIGH)// otherwise if button is pressed then motor rotates in anticlockwise
+  {
+    digitalWrite(8,LOW); 
+    HBit=0;//Need to check   
+
+    if(digitalRead(52)==LOW)//Need to check
+    {
+      HBit=0;//Need to check
+    }
+  }
+
+//  motorDirectionCurrentState=digitalRead(52);// Reading current state of motor pin
+//    
+//    if(motorDirectionCurrentState!=motorDirectionLastState && ((millis() - motorDirectionLastDebounceTime) > motorDirectionDebounceDelay)) //if current satte is not equal to last state
+//    // and difference between motor direction button click is greater than motor debounce delay then add 1 in motor counter
+//    {
+//        MotorDirectionCount=MotorDirectionCount+1;
+//        motorLastDebounceTime = millis(); //set the current time
+//    }
+//    if(motorDirectionCurrentState==LOW && MotorDirectionCount%2==0 )
+//    {
+//      digitalWrite(8,HIGH);
+//    }
+//    if(motorDirectionCurrentState==HIGH && MotorDirectionCount%2!=0)
+//    {
+//       digitalWrite(8,LOW);
+//       
+//    }
+    
+}
+
+///////////////////////////////////// Inlet1Temp()///////////////////
+void Inlet1Temp()
+{
+
+    for(int i=0;i<30;i++)
+    {
+    temp[i] = analogRead(A1); // We put 20 values of pt100 readings in an array named as temp[]
+    Sum=Sum+temp[i];         // Adding all 20 readings
+    
+    }
+    FinalSum =( Sum * 0.48828125)/10; // Convering it in desired format
+    FinalSum=FinalSum/30;// Taking an average of 30 readings
+    //lcd.print(FinalSum); //Printing value
+    Value=FinalSum; // Copying value into Value variable
+    FinalSum=0; // FianlSum variable is reset to 0
+    Sum=0; // Sum variable is reset to 0
+   
+}
+
+///////////////////////////////////// Inlet2Temp()///////////////////
+void Inlet2Temp()
+{
+    for(int i=0;i<30;i++)
+    {
+    temp[i] = analogRead(A2); // We put 20 values of pt100 readings in an array named as temp[]
+    Sum=Sum+temp[i];         // Adding all 20 readings
+    
+    }
+    FinalSum =( Sum * 0.48828125)/10; // Convering it in desired format
+    FinalSum=FinalSum/30;// Taking an average of 30 readings
+    //lcd.print(FinalSum); //Printing value
+    Value=FinalSum; // Copying value into Value variable
+    FinalSum=0; // FianlSum variable is reset to 0
+    Sum=0; // Sum variable is reset to 0
+   
+}
+
+///////////////////////////////////// Outlet1Temp()///////////////////
+void Outlet1Temp()
+{
+    for(int i=0;i<30;i++)
+    {
+    temp[i] = analogRead(A3); // We put 20 values of pt100 readings in an array named as temp[]
+    Sum=Sum+temp[i];         // Adding all 20 readings
+    
+    }
+    FinalSum =( Sum * 0.48828125)/10; // Convering it in desired format
+    FinalSum=FinalSum/30;// Taking an average of 30 readings
+    //lcd.print(FinalSum); //Printing value
+    Value=FinalSum; // Copying value into Value variable
+    FinalSum=0; // FianlSum variable is reset to 0
+    Sum=0; // Sum variable is reset to 0
+   
+}
+
+///////////////////////////////////// Outlet2Temp()///////////////////
+void Outlet2Temp()
+{
+    for(int i=0;i<30;i++)
+    {
+    temp[i] = analogRead(A4); // We put 20 values of pt100 readings in an array named as temp[]
+    Sum=Sum+temp[i];         // Adding all 20 readings
+    
+    }
+    FinalSum =( Sum * 0.48828125)/10; // Convering it in desired format
+    FinalSum=FinalSum/30;// Taking an average of 30 readings
+    //lcd.print(FinalSum); //Printing value
+    Value=FinalSum; // Copying value into Value variable
+    FinalSum=0; // FianlSum variable is reset to 0
+    Sum=0; // Sum variable is reset to 0
+   
+}
+
+
+void loop()
+{
+  delay(50);
+  MotorSpeed(); // function call of motospeed
+  setTemp(); // function call of setTemp
+  int Result2=HeaterTemp();
+  motorONOFF_softLatching();
+  StopWatch();
+  Heater_softLatching();
+  BitDisplay();
+  motorDirection();
+  Inlet1Temp();
+  Inlet2Temp();
+  Outlet1Temp();
+  Outlet2Temp();
+}
